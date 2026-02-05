@@ -10,21 +10,21 @@ from pydantic import BaseModel
 from utils.audioprocessing import extract_features, get_explanation
 
 
-from fastapi.middleware.cors import CORSMiddleware
-
-
-app = FastAPI()
+# ============================
+# App Init
+# ============================
+app = FastAPI(title="AI Voice Detector API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],   # hackathon safe
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ============================
-# API Key (Hackathon Secret)
+# API Key (Hackathon)
 # ============================
 API_KEY = "sk_test_123456789"
 
@@ -36,14 +36,14 @@ SUPPORTED_LANGUAGES = ["Tamil", "English", "Hindi", "Malayalam", "Telugu"]
 # ============================
 # Load Model
 # ============================
-MODEL_PATH = "trained_model.pkl"   # ✅ Correct model file name
+MODEL_PATH = "trained_model.pkl"
 
 try:
     model = joblib.load(MODEL_PATH)
     print("✅ Model Loaded Successfully!")
-except:
+except Exception as e:
     model = None
-    print("❌ Model Not Found! Please train first.")
+    print("❌ Model Not Found:", e)
 
 
 # ============================
@@ -56,59 +56,83 @@ class VoiceRequest(BaseModel):
 
 
 # ============================
-# Home Route
+# Root Routes (Hackathon Fix)
 # ============================
 @app.get("/")
 def home():
-    return {"message": "AI Voice Detector API is running successfully!"}
+    return {
+        "message": "AI Voice Detector API is live",
+        "endpoint": "/api/voice-detection",
+        "method": "POST"
+    }
+
+
+@app.post("/")
+def root_post():
+    # 👈 Hackathon POST tester fix
+    return {
+        "message": "POST received successfully",
+        "use_endpoint": "/api/voice-detection"
+    }
 
 
 # ============================
 # Main Detection Endpoint
 # ============================
 @app.post("/api/voice-detection")
-async def detect_voice(request: VoiceRequest, x_api_key: str = Header(None)):
+async def detect_voice(
+    request: VoiceRequest,
+    x_api_key: str = Header(None)
+):
 
-    # ✅ API Key Validation
-    if x_api_key is None or x_api_key != API_KEY:
-        return {"status": "error", "message": "Invalid API key or missing authentication"}
+    # 🔐 API Key Validation
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key"
+        )
 
-    # ✅ Model Check
+    # 🤖 Model Check
     if model is None:
-        raise HTTPException(status_code=500, detail="Model file not found. Train first.")
+        raise HTTPException(
+            status_code=500,
+            detail="Model not loaded. Train model first."
+        )
 
-    # ✅ Language Validation
+    # 🌐 Language Validation
     if request.language not in SUPPORTED_LANGUAGES:
         return {
             "status": "error",
             "message": f"Unsupported language. Only {SUPPORTED_LANGUAGES} allowed."
         }
 
-    # ✅ Format Validation
+    # 🎵 Audio Format Check
     if request.audioFormat.lower() != "mp3":
-        return {"status": "error", "message": "Invalid audio format. Only MP3 supported."}
+        return {
+            "status": "error",
+            "message": "Invalid audio format. Only MP3 supported."
+        }
 
     try:
         # ============================
         # Decode Base64 Audio
         # ============================
-        audio_data = base64.b64decode(request.audioBase64)
-        audio_file = io.BytesIO(audio_data)
+        audio_bytes = base64.b64decode(request.audioBase64)
+        audio_buffer = io.BytesIO(audio_bytes)
 
-        # Load Audio
-        y, sr = librosa.load(audio_file, sr=16000)
+        # Load audio
+        y, sr = librosa.load(audio_buffer, sr=16000)
 
-        # Extract Features
+        # Feature extraction
         features = extract_features(y, sr)
 
-        # Predict
-        prediction_idx = model.predict([features])[0]
+        # Prediction
+        prediction = model.predict([features])[0]
         probs = model.predict_proba([features])[0]
 
-        classification = "HUMAN" if prediction_idx == 0 else "AI_GENERATED"
+        classification = "HUMAN" if prediction == 0 else "AI_GENERATED"
         confidence = float(max(probs))
 
-        # ✅ Explanation Fix (Only 1 argument)
         explanation = get_explanation(classification)
 
         return {
@@ -120,4 +144,7 @@ async def detect_voice(request: VoiceRequest, x_api_key: str = Header(None)):
         }
 
     except Exception as e:
-        return {"status": "error", "message": f"Processing failed: {str(e)}"}
+        return {
+            "status": "error",
+            "message": f"Processing failed: {str(e)}"
+        }
